@@ -11,70 +11,80 @@ permissions:
   contents: write
 
 env:
-  OBS_DEPS_VERSION: '2025-07-11'
-  OBS_VERSION: '31.1.1'
+  # The only version knob. The prebuilt dependency set (FFmpeg, Qt6,
+  # libdatachannel) is whatever this OBS tag pins for itself — OBS's own
+  # buildspec downloads it during configure and we reuse it for the plugin,
+  # so the plugin always links the exact DLL versions OBS ships.
+  OBS_VERSION: '32.2.2'
 
 jobs:
   windows:
     name: Windows x64
-    runs-on: windows-2022
+    # Matches the toolchain OBS 32.x is built with upstream (VS 2026,
+    # Windows SDK 10.0.26100).
+    runs-on: windows-2025-vs2026
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Cache OBS prebuilt deps
-        id: cache-deps
-        uses: actions/cache@v4
-        with:
-          path: .deps/prebuilt
-          key: obs-deps-${{ env.OBS_DEPS_VERSION }}-x64-v1
-
-      - name: Download OBS prebuilt deps
-        if: steps.cache-deps.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $base = "https://github.com/obsproject/obs-deps/releases/download/${{ env.OBS_DEPS_VERSION }}"
-          New-Item -ItemType Directory -Path .deps/prebuilt -Force | Out-Null
-          Invoke-WebRequest "$base/windows-deps-${{ env.OBS_DEPS_VERSION }}-x64.zip" -OutFile .deps/deps.zip
-          Invoke-WebRequest "$base/windows-deps-qt6-${{ env.OBS_DEPS_VERSION }}-x64.zip" -OutFile .deps/qt6.zip
-          Expand-Archive .deps/deps.zip -DestinationPath .deps/prebuilt/obs-deps-${{ env.OBS_DEPS_VERSION }}-x64
-          Expand-Archive .deps/qt6.zip -DestinationPath .deps/prebuilt/obs-deps-qt6-${{ env.OBS_DEPS_VERSION }}-x64
-          Remove-Item .deps/deps.zip, .deps/qt6.zip
-
-      - name: Cache libobs build
+      - name: Cache OBS SDK and prebuilt deps
         id: cache-obs
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
-          path: .deps/obs-install
-          key: libobs-${{ env.OBS_VERSION }}-deps-${{ env.OBS_DEPS_VERSION }}-x64-v2
+          path: |
+            .deps/obs-install
+            .deps/prebuilt
+          key: obs-sdk-${{ env.OBS_VERSION }}-x64-vs2026-v1
 
-      - name: Build and install libobs
+      - name: Build libobs and collect deps
         if: steps.cache-obs.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $prefix = "$pwd/.deps/prebuilt/obs-deps-${{ env.OBS_DEPS_VERSION }}-x64;$pwd/.deps/prebuilt/obs-deps-qt6-${{ env.OBS_DEPS_VERSION }}-x64"
           $install = "$pwd/.deps/obs-install"
-          git clone --depth 1 --branch ${{ env.OBS_VERSION }} --recursive https://github.com/obsproject/obs-studio.git .deps/obs-src
-          cmake -S .deps/obs-src -B .deps/obs-build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH="$prefix" `
+
+          # Plugins are the only consumers of the submodules, and they are
+          # disabled below, so a plain shallow clone is enough.
+          git clone --depth 1 --branch ${{ env.OBS_VERSION }} https://github.com/obsproject/obs-studio.git .deps/obs-src
+
+          # Configure downloads the prebuilt deps + Qt6 this OBS tag pins
+          # into .deps/obs-src/.deps. obs-frontend-api is built regardless of
+          # ENABLE_FRONTEND, so Qt is not needed for this step.
+          cmake -S .deps/obs-src -B .deps/obs-build -G "Visual Studio 18 2026" -A x64 `
             -DCMAKE_INSTALL_PREFIX="$install" `
             -DENABLE_PLUGINS=OFF `
             -DENABLE_SCRIPTING=OFF `
-            -DENABLE_BROWSER=OFF `
-            -DENABLE_VIRTUALCAM=OFF `
-            -DENABLE_AJA=OFF `
-            -DENABLE_WEBSOCKET=OFF
+            -DENABLE_FRONTEND=OFF
           cmake --build .deps/obs-build --config RelWithDebInfo --target libobs obs-frontend-api
           cmake --install .deps/obs-build --config RelWithDebInfo --component Development
           cmake --install .deps/obs-build --config RelWithDebInfo --component obs_libraries
 
+          # Keep the downloaded dependency tree for the plugin build (and for
+          # the cache), then drop the OBS source/build trees.
+          Move-Item .deps/obs-src/.deps .deps/prebuilt
+          Remove-Item -Recurse -Force .deps/obs-src, .deps/obs-build
+
+      - name: Resolve dependency prefixes
+        id: prefixes
+        shell: pwsh
+        run: |
+          $deps = (Get-ChildItem .deps/prebuilt -Directory -Filter 'obs-deps-*-x64' |
+                   Where-Object { $_.Name -notlike '*qt6*' } | Select-Object -First 1).FullName
+          $qt6  = (Get-ChildItem .deps/prebuilt -Directory -Filter 'obs-deps-qt6-*-x64' |
+                   Select-Object -First 1).FullName
+          if (-not $deps -or -not $qt6) {
+            Get-ChildItem .deps/prebuilt
+            throw "Could not locate prebuilt obs-deps directories"
+          }
+          Write-Host "obs-deps: $deps"
+          Write-Host "qt6:      $qt6"
+          "prefix=$pwd/.deps/obs-install;$deps;$qt6" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Configure plugin
         shell: pwsh
         run: |
-          $prefix = "$pwd/.deps/obs-install;$pwd/.deps/prebuilt/obs-deps-${{ env.OBS_DEPS_VERSION }}-x64;$pwd/.deps/prebuilt/obs-deps-qt6-${{ env.OBS_DEPS_VERSION }}-x64"
-          cmake -S . -B build_x64 -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH="$prefix" `
+          cmake -S . -B build_x64 -G "Visual Studio 18 2026" -A x64 `
+            -DCMAKE_PREFIX_PATH="${{ steps.prefixes.outputs.prefix }}" `
             -DOBS_PLUGIN_BASE="$pwd/stage/obs-web-preview"
 
       - name: Build plugin
@@ -102,7 +112,7 @@ jobs:
           Compress-Archive -Path stage/obs-web-preview/* -DestinationPath "${{ steps.version.outputs.artifact }}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: obs-web-preview-${{ steps.version.outputs.version }}-windows-x64
           path: ${{ steps.version.outputs.artifact }}
