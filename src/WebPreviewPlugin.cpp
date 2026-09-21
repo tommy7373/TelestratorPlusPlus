@@ -684,7 +684,7 @@ void WebPreviewPlugin::HandleOfferRequest(const httplib::Request& req, httplib::
     peer->track = peer->pc->addTrack(videoDesc);
 
     peer->rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
-        ssrc, "obs-web-preview", h264Pt, rtc::H264RtpPacketizer::defaultClockRate);
+        ssrc, "obs-web-preview", h264Pt, rtc::H264RtpPacketizer::ClockRate);
 
     auto packetizer = std::make_shared<rtc::H264RtpPacketizer>(
         rtc::NalUnit::Separator::StartSequence, peer->rtpConfig);

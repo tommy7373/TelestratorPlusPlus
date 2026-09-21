@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Pass at configure time:
-#   -DCMAKE_PREFIX_PATH="C:/obs-plugin-work/.deps/obs-deps-2025-07-11-x64;C:/obs-plugin-work/.deps/obs-deps-qt6-2025-07-11-x64;C:/obs-plugin-work/.deps"
+#   -DCMAKE_PREFIX_PATH="C:/obs-plugin-work/.deps/obs-deps-2026-07-15-x64;C:/obs-plugin-work/.deps/obs-deps-qt6-2026-07-15-x64;C:/obs-plugin-work/.deps"
 
 find_package(libobs REQUIRED)
 find_package(obs-frontend-api REQUIRED)

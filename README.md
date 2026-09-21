@@ -19,7 +19,8 @@ An OBS Studio plugin for Windows that adds native sports-style telestration **an
 ## Requirements
 
 - **Windows 10/11** (64-bit) — Windows only for now
-- **OBS Studio 31.0** or later (including 32.x)
+- **OBS Studio 32.0** or later
+  - Builds are tied to the FFmpeg and Qt6 DLLs OBS ships, so a plugin built for OBS 32.x will not load in OBS 31.x (OBS 31 ships `avcodec-61`/Qt 6.8; OBS 32 ships `avcodec-62`/Qt 6.11). Build against the OBS version you run — see *Building from Source*.
 - Modern browser on the viewing device: Chrome 90+, Firefox 90+, Edge, Safari (iOS 15+)
 - Both OBS machine and viewer device on the same network
 
@@ -72,20 +73,24 @@ The Encoder dropdown lists every non-deprecated H.264 encoder OBS has registered
 
 ### Prerequisites
 
-- Visual Studio 2022 (or 2026) with the **Desktop development with C++** workload
+- Visual Studio 2026 with the **Desktop development with C++** workload (this is what OBS 32.x is built with upstream; VS 2022 still produces an ABI-compatible plugin but is untested here)
 - CMake 3.24+
 - OBS plugin dev dependencies (see below)
 
 ### Getting the OBS plugin dev dependencies
 
-Download the prebuilt dependency archives from the [obs-deps releases page](https://github.com/obsproject/obs-deps/releases) — you need both the main archive and the Qt6 archive for your date/version:
+Use the **same dependency set your target OBS version pins**, otherwise the plugin links against FFmpeg/Qt DLL versions OBS does not ship and fails to load. The version is listed in the `dependencies` block of that OBS tag's `CMakePresets.json` (under the `dependencies` configure preset). For **OBS 32.2.2** that is **`2026-07-15`** — FFmpeg 8.1 (`avcodec-62`/`avutil-60`), Qt 6.11.1, libdatachannel 0.24.2.
+
+Download both archives from the [obs-deps releases page](https://github.com/obsproject/obs-deps/releases):
 
 ```
-obs-deps-YYYY-MM-DD-x64.zip        → extract to C:\obs-plugin-work\.deps\obs-deps-YYYY-MM-DD-x64\
-obs-deps-qt6-YYYY-MM-DD-x64.zip    → extract to C:\obs-plugin-work\.deps\obs-deps-qt6-YYYY-MM-DD-x64\
+windows-deps-YYYY-MM-DD-x64.zip      → extract to C:\obs-plugin-work\.deps\obs-deps-YYYY-MM-DD-x64\
+windows-deps-qt6-YYYY-MM-DD-x64.zip  → extract to C:\obs-plugin-work\.deps\obs-deps-qt6-YYYY-MM-DD-x64\
 ```
 
 The main obs-deps archive bundles everything the plugin needs at runtime: libdatachannel, libavcodec/libavutil (for the Opus encoder), libopus, libsrtp, MbedTLS, etc. No separate downloads.
+
+Alternatively, configure an OBS Studio checkout at your target tag once — its own buildspec downloads the correct archives into `<obs-src>/.deps/` — and point `CMAKE_PREFIX_PATH` at those directories. This is what CI does, which is why bumping `OBS_VERSION` in `.github/workflows/build.yml` is the only change needed to retarget a new OBS release.
 
 ### Configure, build, install
 
@@ -104,8 +109,8 @@ The install step copies the DLLs and data files directly into your OBS plugin di
 | Dependency | How included |
 |---|---|
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | Vendored single header at `third-party/httplib.h` |
-| [libdatachannel](https://github.com/paullouisageneau/libdatachannel) | Prebuilt, sourced from OBS deps package |
-| [FFmpeg libavcodec/libavutil](https://ffmpeg.org/) | Prebuilt, sourced from OBS deps package (for inline Opus encoding) |
+| [libdatachannel](https://github.com/paullouisageneau/libdatachannel) | Prebuilt, sourced from OBS deps package (0.24.2 for OBS 32.2.2) |
+| [FFmpeg libavcodec/libavutil](https://ffmpeg.org/) | Prebuilt, sourced from OBS deps package (8.1 for OBS 32.2.2), for inline Opus encoding |
 
 ## How It Works
 
